@@ -1,0 +1,115 @@
+import tkinter as tk
+from tkinter import messagebox
+import cv2
+import threading
+import time
+from ultralytics import YOLO
+import sys
+
+# Initialize pretrained YOLOv8 model (person detection)
+model = YOLO('yolov8n.pt')  # Nano version for efficiency
+
+class SmartHomeSystem:
+    def __init__(self, root):  # Fixed: Changed _init_ to __init__
+        self.root = root
+        self.root.title("Smart Home Controller")
+        self.root.geometry("400x300")
+        
+        # Device status simulation (Set devices to True to simulate them being ON)
+        self.devices = {
+            "light": True,  # Simulate light ON
+            "fan": True,    # Simulate fan ON
+            "electronics": False  # Simulate electronics OFF
+        }
+        
+        # GUI Components
+        self.status_label = tk.Label(root, text="Status: Initializing", font=("Arial", 12))
+        self.status_label.pack(pady=10)
+        
+        self.camera_btn = tk.Button(root, text="Start Camera", command=self.toggle_camera)
+        self.camera_btn.pack(pady=5)
+        
+        self.terminate_btn = tk.Button(root, text="Emergency Stop", command=self.cleanup, bg="#ff4444")
+        self.terminate_btn.pack(pady=10)
+        
+        # Camera control
+        self.camera_active = False
+        self.last_person_time = time.time()
+        self.auto_shutdown = 180  # 3 minutes
+        
+        # Schedule auto termination
+       
+        self.root.after(self.auto_shutdown * 1000, self.cleanup)
+
+    # Rest of your methods stay the same
+    def toggle_camera(self):
+        """Start/Stop camera monitoring"""
+        if not self.camera_active:
+            self.camera_active = True
+            self.camera_thread = threading.Thread(target=self.monitor_room, daemon=True)
+            self.camera_thread.start()
+            self.camera_btn.config(text="Stop Camera", bg="#cc0000")
+            self.update_status("Camera monitoring started")
+        else:
+            self.camera_active = False
+            self.camera_btn.config(text="Start Camera", bg="SystemButtonFace")
+            self.update_status("Camera monitoring stopped")
+
+    def monitor_room(self):
+        """Main camera monitoring loop"""
+        cap = cv2.VideoCapture(0)
+        while self.camera_active and cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Person detection with YOLOv8
+            results = model(frame, verbose=False)
+            person_detected = any(box.cls == 0 for result in results for box in result.boxes)  # Check if a person is detected
+            
+            if person_detected:
+                self.last_person_time = time.time()
+                self.update_status("Person detected - Normal operation")
+            else:
+                self.check_energy_waste()
+                self.update_status("No person detected - Checking devices...")
+            
+            # Display camera feed
+            cv2.imshow("Room Monitoring", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+    def check_energy_waste(self):
+        """Check for active devices when no person is present"""
+        active_devices = [device for device, status in self.devices.items() if status]  # Find active devices
+        
+        if active_devices:
+            messagebox.showwarning(
+                "Energy Alert!", 
+                f"Turn off {', '.join(active_devices)}!\nNo person detected for {int(time.time() - self.last_person_time)} seconds."
+            )
+            
+            # Optionally turn off devices automatically after alert (Uncomment if needed)
+            # for device in active_devices:
+            #     self.devices[device] = False
+
+    def update_status(self, message):
+        """Update GUI status label"""
+        self.status_label.config(text=f"Status: {message}")
+        self.root.update_idletasks()
+
+    def cleanup(self):
+        """Cleanup resources"""
+        self.camera_active = False
+        cv2.destroyAllWindows()
+        self.root.destroy()
+        sys.exit()
+
+if __name__ == "__main__":  # Fixed: Changed _name_ and _main_ to __name__ and __main__
+    root = tk.Tk()
+    app = SmartHomeSystem(root)
+    root.protocol("WM_DELETE_WINDOW", app.cleanup)
+    root.mainloop()
